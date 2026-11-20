@@ -1739,9 +1739,9 @@ body.app-exit .layout,body.app-exit .topbar{transition:opacity .5s ease,transfor
     <div class="section-title">New Task</div>
     <div class="form-grid">
       <div class="form-group"><label>Employee *</label><select id="t-emp" onchange="fillAreaFromEmp()"><option value="">— Select Employee —</option></select></div>
-      <div class="form-group"><label>Area of Work</label><select id="t-area"><option>— Select employee first —</option></select></div>
+      <div class="form-group"><label>Area of Work</label><select id="t-area" onchange="renderAreaTaskNames()"><option>— Select employee first —</option></select></div>
       <div class="form-group"><label>Task Type *</label><select id="t-type"><option>Daily</option><option>Weekly</option><option>Monthly</option><option>One Time</option></select></div>
-      <div class="form-group"><label>Task Name *</label><input id="t-name" list="task-name-list" autocomplete="off" placeholder="Select or type a new task name"/></div>
+      <div class="form-group"><label>Task Name * <label style="display:inline-flex;align-items:center;gap:4px;font-size:11px;font-weight:400;text-transform:none;letter-spacing:0;margin-left:6px;cursor:pointer"><input type="checkbox" id="t-name-all" style="width:auto" onchange="renderAreaTaskNames()"/> show all names</label></label><input id="t-name" list="task-name-list-area" autocomplete="off" placeholder="Select or type a new task name" onchange="tmNamePicked()"/><div id="t-name-hint" style="font-size:11px;color:var(--muted2);margin-top:4px"></div></div>
       <div class="form-group full"><label>Work Assigned</label><textarea id="t-work" placeholder="Describe the work to be completed…"></textarea></div>
       <div class="form-group"><label>Target Date *</label><input type="date" id="t-target"/></div>
       <div class="form-group full"><label>Attachments (optional · max 5 files · 5 MB each)</label><input type="file" id="t-files" multiple/></div>
@@ -1750,14 +1750,19 @@ body.app-exit .layout,body.app-exit .topbar{transition:opacity .5s ease,transfor
   </div>
   <div class="section" id="tm-section">
     <div class="section-title">Task Name Master <span class="badge" id="tm-count">0 names</span></div>
-    <div class="alert alert-info">☰ Every new task name is saved here automatically and appears in the Task Name dropdown. You can also add or delete names below.</div>
+    <div class="alert alert-info">☰ Every task name is linked to an <b>Area of Work</b>. When you pick an area in Task Assignment, only its linked task names are shown. A new task name you assign is linked to the chosen area automatically. You can add names, change a name's area, or delete names below.</div>
     <div style="display:flex;gap:10px;flex-wrap:wrap;align-items:flex-end;margin-bottom:14px;">
       <div class="form-group" style="flex:1;min-width:220px;max-width:380px;"><label>New Task Name</label><input id="tm-new" placeholder="e.g. Bank Reconciliation" onkeydown="if(event.key==='Enter')addTaskNameManual()"/></div>
+      <div class="form-group" style="min-width:200px;max-width:280px;"><label>Area of Work</label><select id="tm-new-area"></select></div>
       <button class="btn btn-primary" onclick="addTaskNameManual()">＋ Add Name</button>
+    </div>
+    <div style="display:flex;gap:10px;flex-wrap:wrap;align-items:flex-end;margin-bottom:14px;">
+      <div class="form-group" style="min-width:200px;max-width:280px;"><label>Filter by Area</label><select id="tm-filter" onchange="renderTaskMaster()"></select></div>
+      <button class="btn btn-ghost" onclick="tmLinkFromTasks()" title="Links every unlinked name to the area it was most used with in existing tasks">⚡ Auto-link from existing tasks</button>
     </div>
     <div class="table-wrap">
       <table>
-        <thead><tr><th>Task Name</th><th>Tasks Using It</th><th>Added</th><th></th></tr></thead>
+        <thead><tr><th>Task Name</th><th>Area of Work</th><th>Tasks Using It</th><th>Added</th><th></th></tr></thead>
         <tbody id="tm-table"></tbody>
       </table>
     </div>
@@ -2441,7 +2446,7 @@ body.app-exit .layout,body.app-exit .topbar{transition:opacity .5s ease,transfor
       </div>
       <div class="form-group">
         <label>Area of Work</label>
-        <select id="pw-t-area"><option>— Select employee first —</option></select>
+        <select id="pw-t-area" onchange="pwRefreshNames()"><option>— Select employee first —</option></select>
       </div>
       <div class="form-group">
         <label>Task Type *</label>
@@ -2451,7 +2456,7 @@ body.app-exit .layout,body.app-exit .topbar{transition:opacity .5s ease,transfor
       </div>
       <div class="form-group">
         <label>Task Name *</label>
-        <input id="pw-t-name" list="task-name-list" autocomplete="off" placeholder="Select or type a new task name"/>
+        <input id="pw-t-name" list="task-name-list-pw" autocomplete="off" placeholder="Select or type a new task name"/><datalist id="task-name-list-pw"></datalist>
       </div>
       <div class="form-group full">
         <label>Work Description</label>
@@ -2718,6 +2723,7 @@ body.app-exit .layout,body.app-exit .topbar{transition:opacity .5s ease,transfor
 </div>
 
 <datalist id="task-name-list"></datalist>
+<datalist id="task-name-list-area"></datalist>
 <div id="toast"><div class="toast-dot" id="toast-dot"></div><span id="toast-msg"></span></div>
 
 <script>
@@ -2744,7 +2750,7 @@ async function apiCall(url,opt){
 }
 async function dbGet(){return apiCall(DB_URL+'?token='+encodeURIComponent(authToken));}
 async function dbPost(payload){
-  if(payload&&payload.action==='assignTask')tmEnsure(payload.taskName);
+  if(payload&&payload.action==='assignTask')tmEnsure(payload.taskName,payload.linkArea?payload.area:'');
   return apiCall(DB_URL,{method:'POST',headers:{'Content-Type':'text/plain'},body:JSON.stringify(Object.assign({token:authToken},payload))});
 }
 
@@ -2759,7 +2765,7 @@ async function fullSync(){
     if(d.pendingWorks&&Array.isArray(d.pendingWorks)){DB.pendingWorks=d.pendingWorks.map(p=>({id:String(p.PW_ID||p.id||''),createdDate:String(p.CREATED_DATE||p.createdDate||''),empId:String(p.EMP_ID||p.empId||''),empName:String(p.EMP_NAME||p.empName||''),category:String(p.CATEGORY||p.category||'Other'),priority:String(p.PRIORITY||p.priority||'Medium'),dueDate:fmtDate(p.DUE_DATE||p.dueDate||''),desc:String(p.DESCRIPTION||p.desc||''),notes:String(p.NOTES||p.notes||''),status:String(p.STATUS||p.status||'Open'),empRemarks:String(p.EMP_REMARKS||p.empRemarks||''),adminNote:String(p.ADMIN_NOTE||p.adminNote||''),resolvedDate:fmtDate(p.RESOLVED_DATE||p.resolvedDate||''),createdBy:String(p.CREATED_BY||p.createdBy||'')})).filter(p=>p.id);}
     // ── Reminders sheet
     if(d.reminders&&Array.isArray(d.reminders)){DB.reminders=d.reminders.map(r=>({id:String(r.REM_ID||r.id||''),sentDate:String(r.SENT_DATE||r.sentDate||''),empId:String(r.EMP_ID||r.empId||''),empName:String(r.EMP_NAME||r.empName||''),taskId:String(r.TASK_ID||r.taskId||''),taskName:String(r.TASK_NAME||r.taskName||''),message:String(r.MESSAGE||r.message||''),seen:String(r.SEEN||r.seen||'No')})).filter(r=>r.id);}
-    if(d.taskMaster&&Array.isArray(d.taskMaster)){DB.taskMaster=d.taskMaster.map(m=>({name:String(m.TASK_NAME||m.name||'').trim(),createdDate:String(m.CREATED_DATE||m.createdDate||'')})).filter(m=>m.name);}
+    if(d.taskMaster&&Array.isArray(d.taskMaster)){DB.taskMaster=d.taskMaster.map(m=>({name:String(m.TASK_NAME||m.name||'').trim(),createdDate:String(m.CREATED_DATE||m.createdDate||''),area:String(m.AREA_OF_WORK||m.area||'').trim()})).filter(m=>m.name);}
     if(Array.isArray(d.comments)){DB.comments=d.comments.map(c=>({id:String(c.COMMENT_ID||''),taskId:String(c.TASK_ID||''),authorId:String(c.AUTHOR_ID||''),author:String(c.AUTHOR_NAME||''),isAdmin:String(c.IS_ADMIN)==='Yes',text:String(c.TEXT||''),createdAt:String(c.CREATED_AT||'')})).filter(c=>c.id);}
     if(Array.isArray(d.uploads)){DB.uploads=d.uploads.map(u=>({taskId:String(u.TASK_ID||''),name:String(u.FILE_NAME||''),url:String(u.FILE_URL||''),on:String(u.UPLOADED_ON||''),fileId:String(u.FILE_ID||''),by:String(u.UPLOADED_BY||''),byId:String(u.UPLOADED_BY_ID||''),role:String(u.ROLE||''),size:Number(u.SIZE)||0,mime:String(u.MIME||'')})).filter(u=>u.taskId&&u.name);}
     if(Array.isArray(d.templates)){DB.templates=d.templates.map(t=>({id:String(t.TPL_ID||''),name:String(t.NAME||''),work:String(t.WORK||''),type:String(t.TYPE||''),area:String(t.AREA||'')})).filter(t=>t.id);}
@@ -3056,6 +3062,7 @@ function fillAreaFromEmp(){
   const empId=document.getElementById('t-emp').value;const areas=DB.aow.filter(a=>a.empId===empId);
   const sel=document.getElementById('t-area');
   sel.innerHTML=areas.length?areas.map(a=>`<option>${a.area}</option>`).join(''):'<option>— No area assigned —</option>';
+  renderAreaTaskNames();
 }
 
 async function assignTask(){
@@ -3070,7 +3077,7 @@ async function assignTask(){
   DB.tasks.push({id,assignedDate:today,empId,name,area,taskType:ttype,taskName:tname,workAssigned:work,targetDate:target,userRemarks:'',completedDate:'',status:'Pending',kpi:'',score:'',adminRemarks:''});
   renderTaskTable();renderDashboard();toast('Saving task…');
   try{
-    const r=await dbPost({action:'assignTask',empId,name,area,taskType:ttype,taskName:tname,workAssigned:work,targetDate:target});
+    const r=await dbPost({action:'assignTask',empId,name,area,taskType:ttype,taskName:tname,workAssigned:work,targetDate:target,linkArea:true});
     let realId=id;
     if(r?.result&&typeof r.result==='string'&&r.result.startsWith('T')){realId=r.result;const t=DB.tasks.find(x=>x.id===id);if(t)t.id=realId;}
     toast('✓ Task saved','var(--accent2)');
@@ -3079,6 +3086,7 @@ async function assignTask(){
   const tf=document.getElementById('t-files');if(tf)tf.value='';
   ['t-name','t-work','t-target'].forEach(x=>document.getElementById(x).value='');
   document.getElementById('t-emp').value='';document.getElementById('t-area').innerHTML='<option>— Select employee first —</option>';
+  renderAreaTaskNames();
   renderTaskTable();updateTaskCount();
 }
 
@@ -3101,19 +3109,32 @@ function openMultiTask(){
 function mtEmpChanged(){
   const empId=document.getElementById('mt-emp').value;
   document.querySelectorAll('#mt-rows .mt-area').forEach(sel=>{sel.innerHTML=mtAreaOptions(empId,sel.value);});
+  document.querySelectorAll('#mt-rows tr').forEach(mtRefreshRowNames);
 }
 function mtAddRow(){
   const empId=document.getElementById('mt-emp').value;
   const tr=document.createElement('tr');
   tr.innerHTML=`
-    <td><input class="mt-name" list="task-name-list" autocomplete="off" placeholder="Select or type a new name" style="width:100%"/></td>
+    <td><input class="mt-name" autocomplete="off" placeholder="Select or type a new name" style="width:100%"/><datalist class="mt-dl"></datalist></td>
     <td><select class="mt-type" style="width:100%"><option>Daily</option><option>Weekly</option><option>Monthly</option><option>One Time</option></select></td>
-    <td><select class="mt-area" style="width:100%">${mtAreaOptions(empId,'')}</select></td>
+    <td><select class="mt-area" style="width:100%" onchange="mtRefreshRowNames(this.closest('tr'))">${mtAreaOptions(empId,'')}</select></td>
     <td><input class="mt-work" placeholder="Describe the work…" style="width:100%"/></td>
     <td><input type="date" class="mt-target" style="width:100%"/></td>
     <td><input type="file" class="mt-files" multiple style="width:100%;font-size:11px"/></td>
     <td><button class="btn btn-ghost btn-sm" title="Remove row" onclick="this.closest('tr').remove()">✕</button></td>`;
   document.getElementById('mt-rows').appendChild(tr);
+  mtRefreshRowNames(tr);
+}
+let mtDlSeq=0;
+// each row offers the task names linked to ITS area of work
+function mtRefreshRowNames(tr){
+  if(!tr)return;
+  const inp=tr.querySelector('.mt-name'),dl=tr.querySelector('.mt-dl'),ar=tr.querySelector('.mt-area');
+  if(!inp||!dl)return;
+  if(!dl.id){dl.id='mt-dl-'+(++mtDlSeq);inp.setAttribute('list',dl.id);}
+  const r=tmSuggest(ar?ar.value:'',false);
+  dl.innerHTML=r.names.map(n=>`<option value="${mtEsc(n)}"></option>`).join('');
+  inp.title=r.note;
 }
 async function submitMultiTask(){
   const empId=document.getElementById('mt-emp').value;
@@ -3142,7 +3163,7 @@ async function submitMultiTask(){
   for(let i=0;i<items.length;i++){
     const it=items[i];
     try{
-      const r=await dbPost({action:'assignTask',empId,name,area:it.area,taskType:it.taskType,taskName:it.taskName,workAssigned:it.work,targetDate:it.target});
+      const r=await dbPost({action:'assignTask',empId,name,area:it.area,taskType:it.taskType,taskName:it.taskName,workAssigned:it.work,targetDate:it.target,linkArea:true});
       if(r?.result&&typeof r.result==='string'&&r.result.startsWith('T'))added[i].id=r.result;
       if(it.files&&it.files.length)await attUploadFiles(added[i].id,it.files);
     }catch(e){failed++;}
@@ -3391,41 +3412,126 @@ function tmNames(){
   DB.taskMaster.forEach(m=>{const k=m.name.toLowerCase();if(!seen[k]){seen[k]=1;out.push(m.name);}});
   return out.sort((a,b)=>a.localeCompare(b));
 }
-function renderTaskNameList(){
-  const dl=document.getElementById('task-name-list');if(!dl)return;
-  dl.innerHTML=tmNames().map(n=>`<option value="${mtEsc(n)}"></option>`).join('');
+// ── area ↔ task-name link ──
+function tmRealArea(a){a=String(a==null?'':a).trim();return(!a||a.charAt(0)==='—'||a.charAt(0)==='-')?'':a;}
+function tmAreaKey(a){return tmRealArea(a).toLowerCase();}
+function tmAreaOf(name){const k=String(name||'').trim().toLowerCase();const m=DB.taskMaster.find(x=>x.name.toLowerCase()===k);return m?m.area||'':'';}
+function tmNamesForArea(area){
+  const k=tmAreaKey(area);if(!k)return[];
+  return DB.taskMaster.filter(m=>tmAreaKey(m.area)===k).map(m=>m.name).sort((a,b)=>a.localeCompare(b));
 }
-function tmEnsure(name){
+// every area known: from staff assignments + from links already made
+function tmAllAreas(){
+  const seen={},out=[];
+  DB.aow.map(a=>a.area).concat(DB.taskMaster.map(m=>m.area)).forEach(a=>{a=tmRealArea(a);const k=a.toLowerCase();if(a&&!seen[k]){seen[k]=1;out.push(a);}});
+  return out.sort((x,y)=>x.localeCompare(y));
+}
+// names to offer for an area: linked ones; if none are linked yet, all names (so the field is never empty)
+function tmSuggest(area,showAll){
+  area=tmRealArea(area);
+  if(!area||showAll)return{names:tmNames(),note:area?`Showing all task names (${tmNames().length})`:'Select an Area of Work to see its linked task names'};
+  const linked=tmNamesForArea(area);
+  if(!linked.length)return{names:tmNames(),note:`No task names linked to "${area}" yet — showing all. The name you assign will be linked to this area automatically.`};
+  return{names:linked,note:`${linked.length} task name${linked.length>1?'s':''} linked to "${area}". A new name you type will be linked to it automatically.`};
+}
+function renderAreaTaskNames(){
+  const dl=document.getElementById('task-name-list-area');if(!dl)return;
+  const area=(document.getElementById('t-area')||{}).value;
+  const all=!!(document.getElementById('t-name-all')||{}).checked;
+  const r=tmSuggest(area,all);
+  dl.innerHTML=r.names.map(n=>`<option value="${mtEsc(n)}"></option>`).join('');
+  const h=document.getElementById('t-name-hint');if(h)h.textContent=r.note;
+}
+// a linked name was picked: switch Area of Work to its area (if the employee has it)
+function tmNamePicked(){
+  const nm=document.getElementById('t-name').value.trim();if(!nm)return;
+  const ar=tmAreaOf(nm);if(!ar)return;
+  const sel=document.getElementById('t-area');
+  const opt=[...sel.options].find(o=>o.value.toLowerCase()===ar.toLowerCase());
+  if(opt&&sel.value!==opt.value){sel.value=opt.value;renderAreaTaskNames();}
+}
+function renderTaskNameList(){
+  const dl=document.getElementById('task-name-list');
+  if(dl)dl.innerHTML=tmNames().map(n=>`<option value="${mtEsc(n)}"></option>`).join('');
+  renderAreaTaskNames();
+  document.querySelectorAll('#mt-rows tr').forEach(mtRefreshRowNames);
+}
+// add the name if missing; link it to the area when it has none yet (never overwrites an existing link)
+function tmEnsure(name,area){
   name=String(name||'').trim();if(!name)return;
-  if(!DB.taskMaster.some(m=>m.name.toLowerCase()===name.toLowerCase())){
-    DB.taskMaster.push({name,createdDate:todayStr()});
-    renderTaskNameList();renderTaskMaster();
-  }
+  area=tmRealArea(area);
+  const m=DB.taskMaster.find(x=>x.name.toLowerCase()===name.toLowerCase());
+  if(!m){DB.taskMaster.push({name,createdDate:todayStr(),area});}
+  else if(area&&!m.area){m.area=area;}
+  else return;
+  renderTaskNameList();renderTaskMaster();
+}
+function tmAreaSelectHtml(cur,withBlankLabel){
+  const areas=tmAllAreas();cur=tmRealArea(cur);
+  if(cur&&!areas.some(a=>a.toLowerCase()===cur.toLowerCase()))areas.push(cur);
+  return`<option value="">${withBlankLabel}</option>`+areas.map(a=>`<option value="${mtEsc(a)}" ${a.toLowerCase()===cur.toLowerCase()?'selected':''}>${mtEsc(a)}</option>`).join('');
 }
 function renderTaskMaster(){
   const tb=document.getElementById('tm-table');if(!tb)return;
-  tmList=tmNames();
-  document.getElementById('tm-count').textContent=tmList.length+(tmList.length===1?' name':' names');
-  if(!tmList.length){tb.innerHTML='<tr><td colspan="4" class="empty-state"><div class="ei">◌</div><p>No task names yet — they are added as you create tasks</p></td></tr>';return;}
+  const ns=document.getElementById('tm-new-area');if(ns){const v=ns.value;ns.innerHTML=tmAreaSelectHtml(v,'— No area (link later) —');}
+  const fs=document.getElementById('tm-filter');
+  let fv=fs?fs.value:'';
+  if(fs){
+    const areas=tmAllAreas();
+    fs.innerHTML='<option value="">All areas</option><option value="__none">Not linked to any area</option>'+areas.map(a=>`<option value="${mtEsc(a)}">${mtEsc(a)}</option>`).join('');
+    if([...fs.options].some(o=>o.value===fv))fs.value=fv;else fv='';
+  }
+  const all=tmNames();
+  tmList=all.filter(n=>{
+    if(!fv)return true;
+    const ar=tmAreaOf(n);
+    return fv==='__none'?!ar:ar.toLowerCase()===fv.toLowerCase();
+  });
+  document.getElementById('tm-count').textContent=all.length+(all.length===1?' name':' names')+(fv?` · ${tmList.length} shown`:'');
+  if(!tmList.length){tb.innerHTML=`<tr><td colspan="5" class="empty-state"><div class="ei">◌</div><p>${all.length?'No task names for this filter':'No task names yet — they are added as you create tasks'}</p></td></tr>`;return;}
   const used={};DB.tasks.forEach(t=>{const k=String(t.taskName||'').trim().toLowerCase();used[k]=(used[k]||0)+1;});
   tb.innerHTML=tmList.map((n,i)=>{
     const m=DB.taskMaster.find(x=>x.name.toLowerCase()===n.toLowerCase());
     return`<tr>
       <td><strong>${mtEsc(n)}</strong></td>
+      <td><select style="min-width:170px" onchange="setTaskNameAreaUI(${i},this.value)">${tmAreaSelectHtml(m&&m.area,'— Not linked —')}</select></td>
       <td style="font-family:var(--mono);font-size:12px;font-weight:600">${used[n.toLowerCase()]||0}</td>
       <td style="font-family:var(--mono);font-size:12px;color:var(--muted)">${m&&m.createdDate?formatDate(m.createdDate):'—'}</td>
       <td><button class="btn btn-ghost btn-sm" title="Delete name" style="color:var(--danger)" onclick="deleteTaskName(${i})">🗑</button></td>
     </tr>`;
   }).join('');
 }
+async function setTaskNameAreaUI(i,area){
+  if(!isAdminUser())return;
+  const name=tmList[i];if(!name)return;
+  area=tmRealArea(area);
+  const m=DB.taskMaster.find(x=>x.name.toLowerCase()===name.toLowerCase());
+  if(m)m.area=area;else DB.taskMaster.push({name,createdDate:todayStr(),area});
+  renderTaskNameList();renderTaskMaster();toast('Saving…');
+  try{await dbPost({action:'setTaskNameArea',name,area});toast(area?`✓ Linked to ${area}`:'✓ Unlinked','var(--accent2)');}
+  catch(e){toast('Changed locally. DB sync failed.','var(--accent3)');}
+}
+// link every still-unlinked name to the area it was most used with in existing tasks
+async function tmLinkFromTasks(){
+  if(!isAdminUser())return;
+  if(!confirm('Link every task name that has no area yet to the area it was most often used with in existing tasks?\n\nNames that already have an area are not changed.'))return;
+  toast('Linking…');
+  try{
+    const r=await dbPost({action:'linkTaskNameAreas'});
+    const n=r&&r.result&&r.result.linked!=null?r.result.linked:0;
+    await fullSync();
+    toast(`✓ ${n} task name${n===1?'':'s'} linked`,'var(--accent2)');
+  }catch(e){toast('Could not link. Check connection / redeploy Code.gs.','var(--danger)');}
+}
 async function addTaskNameManual(){
   if(!isAdminUser())return;
   const inp=document.getElementById('tm-new');const name=inp.value.trim();
   if(!name){toast('Enter a task name','var(--danger)');return;}
   if(DB.taskMaster.some(m=>m.name.toLowerCase()===name.toLowerCase())){toast('Task name already exists','var(--accent3)');return;}
-  DB.taskMaster.push({name,createdDate:todayStr()});
+  const area=tmRealArea((document.getElementById('tm-new-area')||{}).value);
+  DB.taskMaster.push({name,createdDate:todayStr(),area});
   inp.value='';renderTaskNameList();renderTaskMaster();toast('Saving…');
-  try{await dbPost({action:'addTaskName',name});toast('✓ Task name added','var(--accent2)');}
+  try{await dbPost({action:'addTaskName',name,area});toast('✓ Task name added','var(--accent2)');}
   catch(e){toast('Added locally. DB sync failed.','var(--accent3)');}
 }
 async function deleteTaskName(i){
@@ -3445,9 +3551,11 @@ async function tmBackfill(){
   const seen={},names=[];
   DB.tasks.forEach(t=>{const n=String(t.taskName||'').trim();const k=n.toLowerCase();if(n&&!seen[k]){seen[k]=1;names.push(n);}});
   if(!names.length)return;
-  names.forEach(n=>DB.taskMaster.push({name:n,createdDate:todayStr()}));
+  const cnt={};DB.tasks.forEach(t=>{const n=String(t.taskName||'').trim(),a=tmRealArea(t.area);if(n&&a){const c=cnt[n]=cnt[n]||{};c[a]=(c[a]||0)+1;}});
+  const areas={};Object.keys(cnt).forEach(n=>{areas[n]=Object.keys(cnt[n]).sort((x,y)=>cnt[n][y]-cnt[n][x])[0];});
+  names.forEach(n=>DB.taskMaster.push({name:n,createdDate:todayStr(),area:areas[n]||''}));
   renderTaskNameList();renderTaskMaster();
-  try{await dbPost({action:'addTaskNames',names});toast(`✓ Task Name Master created (${names.length} names)`,'var(--accent2)');}
+  try{await dbPost({action:'addTaskNames',names,areas});toast(`✓ Task Name Master created (${names.length} names)`,'var(--accent2)');}
   catch(e){}
 }
 
@@ -3945,6 +4053,13 @@ function pwFillArea() {
   sel.innerHTML = areas.length
     ? areas.map(a => `<option>${a.area}</option>`).join('')
     : '<option>— No area assigned —</option>';
+  pwRefreshNames();
+}
+function pwRefreshNames() {
+  const dl = document.getElementById('task-name-list-pw'); if (!dl) return;
+  const sel = document.getElementById('pw-t-area');
+  const r = tmSuggest(sel ? sel.value : '', false);
+  dl.innerHTML = r.names.map(n => `<option value="${mtEsc(n)}"></option>`).join('');
 }
 
 async function pwAssignTask() {
@@ -3979,7 +4094,7 @@ async function pwAssignTask() {
     const r = await dbPost({
       action: 'assignTask', empId, name, area,
       taskType: ttype, taskName: tname,
-      workAssigned: work, targetDate: target
+      workAssigned: work, targetDate: target, linkArea: true
     });
     if (r?.result && typeof r.result === 'string' && r.result.startsWith('T')) {
       const t = DB.tasks.find(x => x.id === id);
@@ -4094,6 +4209,7 @@ function openPWModal(id){
     if(areaSel)areaSel.innerHTML=areas.length
       ?areas.map(a=>`<option>${a.area}</option>`).join('')
       :'<option>— No area assigned —</option>';
+    pwRefreshNames();
   }
 
   document.getElementById('pw-modal-ttl').innerHTML=`Work Item <span style="font-size:11px;color:var(--muted2);font-family:var(--mono);margin-left:6px">${id}</span><button class="modal-close" onclick="closeModal('pw-modal')">×</button>`;
